@@ -4,30 +4,44 @@ const { promisify } = require('util')
 const exec = promisify(require('child_process').exec)
 const prompts = require('prompts')
 
+const DISPLAY_LIST_COMMAND="git for-each-ref --color=always --sort=-committerdate refs/heads/ --format='%(HEAD) %(align:19)%(color:green)%(committerdate:relative)%(color:reset)%(end) %(color:red)%(objectname:short)%(color:reset)  %(color:yellow)%(refname:short)%(color:reset)  %(contents:subject) %(color:blue) %(authorname)%(color:reset)'";
+const LIST_COMMAND="git for-each-ref --sort=-committerdate refs/heads/ --format='%(refname:short)'";
+
 async function run () {
-  const { stdout: branches } = await exec('git branch -v --sort=-committerdate')
+  const { stdout: display_list_output } = await exec(DISPLAY_LIST_COMMAND)
+  const { stdout: list_output } = await exec(LIST_COMMAND)
 
-  const choices = branches
-    .split(/\n/)
-    .filter(branch => !!branch.trim())
-    .map(branch => {
-      const [, flag, value, hint] = branch.match(/([* ]) +([^ ]+) +(.+)/)
-      return { value, hint, disabled: flag === '*' }
-    })
+  const display_options = display_list_output.split(/\n/);
+  const options = list_output.split(/\n/);
 
-  const { branch } = await prompts({
-    type: 'select',
+  if (options.length === 0) {
+    process.exit(1);
+  }
+  if (options.length !== display_options.length) {
+    process.stderr.write('Size mismatch between display list and option list\n');
+    process.exit(1);
+  }
+
+  const choices = []
+  for (let i = 0; i < display_options.length - 1; i++) {
+    choices.push({title: display_options[i], value: options[i]});
+  }
+
+  const result = await prompts({
+    type: 'autocomplete',
     name: 'branch',
-    message: 'Switch branch',
+    message: 'Select a branch',
     choices,
-    hint: choices[0].hint,
-    warn: 'current branch',
-    onState ({ value }) {
-      this.hint = choices.find(c => c.value === value).hint
-    }
+    limit: 20,
+    suggest: (input, choices) => choices.filter(i=> i.title.toLowerCase().includes(input.toLowerCase())),
+    onCancel: () => false
   })
 
-  await checkout(branch)
+  if (!result.branch) {
+    process.exit(0);
+  }
+
+  await checkout(result.branch)
 }
 
 async function checkout (branch) {
